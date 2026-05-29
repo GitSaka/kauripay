@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs"; // ✅ Universel et compatible Vercel Cloud
 import { prisma } from "../../../config/prisma";
 
 export async function POST(request: Request) {

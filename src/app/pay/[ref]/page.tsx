@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ShieldCheck, Smartphone, AlertCircle, CheckCircle2, ArrowRight, Loader2, X } from "lucide-react";
+import AppLoader from "@/components/AppLoader";
 
 interface PendingDeal {
   id: string; ref: string; description: string; amountFcfa: number; feeFcfa: number; totalFcfa: number; sellerName: string; buyerPhone: string; status: string;
@@ -17,6 +18,9 @@ export default function PublicPayPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isPaying, setIsPaying] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+    // 🔐 Le gardien du décalage réseau FedaPay / Base de données
+  const [isCheckingPayment, setIsCheckingPayment] = useState<boolean>(false);
+
   
   // 🔒 États pour gérer l'affichage interne du guichet de paiement
   const [waitingForPin, setWaitingForPin] = useState<boolean>(false);
@@ -39,6 +43,39 @@ export default function PublicPayPage() {
     if (ref) fetchDealData();
   }, [ref]);
 
+    useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    // Si on n'est pas en train de vérifier, on ne fait rien
+    if (!isCheckingPayment) return;
+
+    const checkStatusInDatabase = async () => {
+      try {
+        // Interrogation de ton API de suivi de deal existante
+        const response = await fetch(`/api/deal?ref=${ref}`);
+        const data = await response.json();
+
+        if (response.ok && data.deal.status === "FUNDS_SECURED") {
+          // 🎉 L'ARGENT EST DANS LE COFFRE-FORT ! Ton Webhook a fait son travail
+          clearInterval(intervalId);
+          setIsCheckingPayment(false);
+          
+          // Redirection vers ton reçu public (Ex: /pay/success ou dans ta capsule)
+          router.push(`/success?ref=${ref}`);
+        }
+      } catch (err) {
+        console.error("Erreur lors de la vérification du statut :", err);
+      }
+    };
+
+    // Lancement de la boucle : interrogation toutes les 2 secondes
+    intervalId = setInterval(checkStatusInDatabase, 2000);
+
+    // Nettoyage de sécurité si l'utilisateur ferme la page
+    return () => clearInterval(intervalId);
+  }, [isCheckingPayment, ref, router]);
+
+
   // Chrono de surveillance automatique en arrière-plan (Polling)
   const verifierStatutPaiement = (reference: string) => {
   const interval = setInterval(async () => {
@@ -55,7 +92,7 @@ export default function PublicPayPage() {
         
         const cleanPhoneForUrl = data.deal.buyerPhone.replace("+229", "");
   
-        router.push(`/dashboard/success?phone=${cleanPhoneForUrl}&ref=${data.deal.ref}`); 
+        router.push(`/success?phone=${cleanPhoneForUrl}&ref=${data.deal.ref}`); 
       }
     } catch (err) {
       console.error("Polling error:", err);
@@ -100,6 +137,26 @@ export default function PublicPayPage() {
 
   if (isLoading) return <div className="flex-1 flex items-center justify-center bg-white text-xs font-black text-slate-400 animate-pulse min-h-screen">{"Chargement..."}</div>;
   if (error || !deal) return <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-white min-h-screen"><AlertCircle className="w-12 h-12 text-[#EF4444] mb-3" /><p className="text-sm font-bold text-slate-700">{error || "Ce lien n'existe pas."}</p></div>;
+    // 🛡️ BARRAGE VISUEL ADAPTÉ (ZÉRO ERREUR TYPESCRIPT)
+    if (isCheckingPayment || (isPaying && waitingForPin)){
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-white h-full animate-fade-in">
+        
+        {/* On appelle le loader tout seul, sans lui donner de paramètre 'message' */}
+        <AppLoader />
+        
+        {/* On écrit le texte directement en dessous dans une vraie balise HTML */}
+        <p className="text-xs font-black text-[#0A2E1A] uppercase tracking-wide mt-4 animate-pulse">
+          Sécurisation des fonds en cours...
+        </p>
+        
+        <p className="text-[10px] font-bold text-slate-400 max-w-[80%] mx-auto mt-1 leading-relaxed">
+          KauriPay valide la réception de vos FCFA auprès de MTN/Moov. Veuillez ne pas fermer cette page.
+        </p>
+        
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col justify-between p-6 bg-white min-h-screen animate-fade-in relative">

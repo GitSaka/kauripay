@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS STRICTS POUR SÉCURISER L'APPLICATION
+// ==========================================
+enum TransactionStatus {
+  PENDING_PAYMENT // Ajouté : Lien créé, en attente que l'acheteur paye
+  FUNDS_SECURED   // Argent payé et bloqué chez KauriPay
+  IN_DELIVERY     // Le vendeur a déposé le colis à la gare (STC, Baobab...)
+  RELEASED        // Argent débloqué au vendeur
+  DISPUTED        // Conflit ouvert, arbitrage du Juge Suprême requis
+  CANCELLED       // Annulation du deal
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+  CLOSED
+}
+
+enum NotificationType {
+  TRANSACTION_CREATED
+  PAYMENT_RECEIVED
+  RELEASED
+  DISPUTE_OPENED
+  MESSAGE
+}
+
+enum FeeType {
+  ESCROW
+  WITHDRAWAL
+  DEPOSIT
+}
+
+// ==========================================
+// 1. TABLE : USER (Avec Moat de Réputation)
+// ==========================================
+model User {
+  id             String   @id @default(cuid())
+  phone          String   @unique // Identifiant WhatsApp (+229XXXXXXXX)
+  email          String?  @unique
+  name           String
+  passwordHash   String
+  kycStatus      String   @default("unverified") // unverified, pending, verified
+  role           String   @default("USER") 
+  rating         Decimal  @default(0) @db.Decimal(3, 2) // Note commerciale (ex: 4.85)
+  totalSales     Int      @default(0) // Capital confiance vendeur
+  totalPurchases Int      @default(0) // Activité acheteur
+  sellerLink     String?  @unique // Le lien direct Instagram/TikTok (ex: jean_doe)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  wallet               Wallet?
+  transactionsAsBuyer  EscrowTransaction[] @relation("BuyerTransactions")
+  transactionsAsSeller EscrowTransaction[] @relation("SellerTransactions")
+  notifications        Notification[]
+  resolvedDisputes     Dispute[]           @relation("AdminResolutions")
+
+  @@map("users")
+}
+
+// ==========================================
+// 2. TABLE : WALLET
+// ==========================================
+model Wallet {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  balanceFcfa Int      @default(0) // Valeurs absolues en FCFA
+  escrowFcfa  Int      @default(0) // Fonds bloqués chez CinetPay/KauriPay
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+// ==========================================
+// 3. LE MODÈLE UNIQUE : ESCROW_TRANSACTION (Fusionné & Complet)
+// ==========================================
+model EscrowTransaction {
+  id             String            @id @default(cuid())
+  ref            String            @unique // Référence unique métier (ex: KRP-847293)
+  description    String?           @db.Text
+
+  // Relations Rôles
+  sellerId       String
+  seller         User              @relation("SellerTransactions", fields: [sellerId], references: [id])
+  
+  buyerId        String?           // Réintroduit optionnel : Nullable au début si Koffi n'a pas de compte
+  buyer          User?             @relation("BuyerTransactions", fields: [buyerId], references: [id])
+  buyerPhone     String            // Réintroduit : Garde le contact même sans compte au début
+
+  // Comptabilité stricte
+  amountFcfa     Int
+  feeFcfa        Int               @default(0)
+  totalFcfa      Int               // Réintroduit : Évite les calculs répétés (amountFcfa + feeFcfa)
+
+  status         TransactionStatus @default(PENDING_PAYMENT)
+
+  // Extension Logistique Conservée (Gares de bus béninoises)
+  trackingNumber String?           // Numéro de suivi du colis (STC, Baobab, etc.)
+  trackingUrl    String?           @db.Text
+  deliveryStatus String?           // en_transit, livré, retour
+
+  // Horodatage précis
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  paidAt         DateTime?         // Marqueur d'encaissement du Webhook
+  releasedAt     DateTime?         // Marqueur de clôture du deal
+
+  history        TransactionHistory[]
+  dispute        Dispute?
+  notifications  Notification[]
+
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([status])
+  @@map("escrow_transactions")
+}
+
+// ==========================================
+// 4. TABLE : TRANSACTION_HISTORY (Append-Only)
+// ==========================================
+model TransactionHistory {
+  id            String   @id @default(cuid())
+  transactionId String
+  type          String   // link_created, escrow_hold, release, withdrawal
+  amountFcfa    Int
+  metadata      Json?    // Payload brute CinetPay pour le SAV
+  createdAt     DateTime @default(now())
+
+  transaction EscrowTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("transaction_histories")
+}
+
+// ==========================================
+// 5. TABLE : DISPUTE
+// ==========================================
+model Dispute {
+  id             String        @id @default(cuid())
+  transactionId  String        @unique
+  reason         String        @db.Text
+  evidenceUrl    String?       @db.Text // Vidéo Cloudinary continue d'unboxing
+  status         DisputeStatus @default(OPEN)
+  resolvedBy     String?
+  resolutionNote String?       @db.Text
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  transaction EscrowTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  admin       User?             @relation("AdminResolutions", fields: [resolvedBy], references: [id])
+
+  @@map("disputes")
+}
+
+// ==========================================
+// 6. TABLE : FEE
+// ==========================================
+model Fee {
+  id           String   @id @default(cuid())
+  type         FeeType  @unique
+  ratePercent  Decimal  @db.Decimal(5, 2) // ex: 3.00 pour 3%
+  minFeeFcfa   Int      @default(500)     // Protection du seuil minimum
+  maxFeeFcfa   Int?
+  isActive     Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  @@map("fees")
+}
+
+// ==========================================
+// 7. TABLE : NOTIFICATION
+// ==========================================
+model Notification {
+  id            String            @id @default(cuid())
+  userId        String
+  transactionId String?           // Optionnel : Permet de lier directement à la ligne d'Escrow
+  type          NotificationType
+  title         String
+  message       String            @db.Text
+  isRead        Boolean           @default(false)
+  link          String?           // Redirection interne (ex: /escrow/cuid)
+  createdAt     DateTime          @default(now())
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction EscrowTransaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}

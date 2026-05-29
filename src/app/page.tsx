@@ -1,113 +1,186 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { Award, ArrowRight, RefreshCcw } from "lucide-react";
+import LandingHeader from "@/components/LandingHeader";
+import LandingBubble from "@/components/LandingBubble";
+import TypingIndicator from "@/components/TypingIndicator";
+import LandingFooter from "@/components/LandingFooter";
+import LandingVFooter from "@/components/LandingVFooter";
+
+
+interface DialogueStep {
+  sender: "CLIENT" | "KAURI";
+  text: string;
+}
+
+export default function LandingPage() {
+  const router = useRouter();
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // 📝 SCÉNARIO DE L'ACHETEUR (Début automatique)
+  const buyerScript: DialogueStep[] = [
+    { sender: "KAURI", text: "Je suppose que vous êtes un acheteur qui s'apprête à faire un dépôt MoMo pour un article sur WhatsApp ou Facebook, n'est-ce pas ? 😉" },
+    { sender: "CLIENT", text: "Oui c'est exactement ça ! Mais j'ai peur de me faire arnaquer... Si j'envoie mes FCFA en avance et que le vendeur bloque mon numéro ? 😰" },
+    { sender: "KAURI", text: "C'est fini ça ! Avec KauriPay, tu bloques l'argent dans notre coffre-fort sécurisé. Le vendeur voit que l'argent est consigné, mais il ne peut pas le toucher tant que tu n'as pas le colis." },
+    { sender: "CLIENT", text: "Et si le colis arrive vide à la gare de bus ? Je perds mes sous ?" },
+    { sender: "KAURI", text: "Non ! Tu inspectes le colis à la gare. S'il y a un problème, tu cliques sur 'Litige' et tout est gelé. Yao ne touche ses FCFA que si tu valides sur ton écran que tout est conforme ! ✅" },
+  ];
+
+  // 📝 SCÉNARIO DU VENDEUR (S'active si Yao se manifeste dans le bloc)
+  const sellerScript: DialogueStep[] = [
+    { sender: "KAURI", text: "Ah, vous êtes plutôt vendeur ! Autant pour moi. L'algorithme a cru que vous étiez client. Lançons votre protocole de protection des ventes. 💰" },
+    { sender: "CLIENT", text: "Moi je vends des téléphones en ligne. Si j'envoie mon colis par le bus à Parakou sans recevoir l'argent d'abord, le client peut prendre la marchandise et fuir ! 📉" },
+    { sender: "KAURI", text: "Impossible ici. Avant que tu ne te déplaces à la gare, l'acheteur est obligé de bloquer la totalité de la somme chez KauriPay. Tu reçois une alerte instantanée : 'Feu Vert, Argent Consigné' 🔒." },
+    { sender: "CLIENT", text: "Et s'il prend le colis à la gare mais fait le mort sur WhatsApp pour bloquer mes FCFA ?" },
+    { sender: "KAURI", text: "Tu enregistres le numéro du chauffeur et ton reçu papier. Si le client fait le mort pendant 48h, tu cliques sur 'Réclamation'. Notre équipe vérifie auprès du bus et te verse tes fonds de force ! ⚖️" },
+  ];
+
+  const [visibleMessages, setVisibleMessages] = useState<DialogueStep[]>([]);
+  const [scriptMode, setScriptMode] = useState<"BUYER" | "SELLER_RUNNING" | "FINISHED">("BUYER");
+  const [localIndex, setLocalIndex] = useState<number>(0);
+  const [isTyping, setIsTyping] = useState<boolean>(false);
+  const [showEmbeddedButton, setShowEmbeddedButton] = useState<boolean>(false);
+  const [showFinalActions, setShowFinalActions] = useState<boolean>(false);
+
+  // Automatisme de lecture du fil Acheteur
+  useEffect(() => {
+    if (scriptMode === "BUYER" && localIndex < buyerScript.length) {
+      setIsTyping(true);
+      const delay = buyerScript[localIndex].sender === "CLIENT" ? 1500 : 2200;
+      
+      const timeout = setTimeout(() => {
+        setIsTyping(false);
+        setVisibleMessages((prev) => [...prev, buyerScript[localIndex]]);
+        setLocalIndex((prev) => prev + 1);
+      }, delay);
+      return () => clearTimeout(timeout);
+    } else if (scriptMode === "BUYER") {
+      setShowEmbeddedButton(true); // Fait surgir l'option directement à l'intérieur du chat
+    }
+  }, [localIndex, scriptMode]);
+
+  // Automatisme de lecture du fil Vendeur
+  useEffect(() => {
+    if (scriptMode === "SELLER_RUNNING" && localIndex < sellerScript.length) {
+      setIsTyping(true);
+      const delay = sellerScript[localIndex].sender === "CLIENT" ? 1500 : 2200;
+
+      const timeout = setTimeout(() => {
+        setIsTyping(false);
+        setVisibleMessages((prev) => [...prev, sellerScript[localIndex]]);
+        setLocalIndex((prev) => prev + 1);
+      }, delay);
+      return () => clearTimeout(timeout);
+    } else if (scriptMode === "SELLER_RUNNING") {
+      setScriptMode("FINISHED");
+      setShowFinalActions(true);
+    }
+  }, [localIndex, scriptMode]);
+
+  // Déclencheur au sein du bloc : Le vendeur répond à Kauri
+  const handleSwitchToSeller = () => {
+    setShowEmbeddedButton(false);
+    setIsTyping(true);
+
+    // Injection de la réponse de Yao dans le flux continu
+    setVisibleMessages((prev) => [
+      ...prev,
+      { sender: "CLIENT", text: "Attends Kauri, moi je ne suis pas acheteur ! Je suis plutôt un vendeur de téléphones qui veut sécuriser ses expéditions. 💰" }
+    ]);
+
+    setScriptMode("SELLER_RUNNING");
+    setLocalIndex(0);
+  };
+
+    // 🔒 SCROLL SÉCURISÉ : Défilement fluide et naturel style WhatsApp
+   // 🔒 LE CONTROLEUR DE SCROLL INTERNE STYLE WHATSAPP APP
+  useEffect(() => {
+    // Si la discussion démarre à peine, on reste sagement scotché en haut pour voir l'en-tête
+    if (visibleMessages.length <= 1) return;
+
+    // 🎯 SÉCURISATION : On dit au navigateur d'aligner l'ancrage sur le BAS de la capsule
+    // L'argument 'block: "end"' empêche la page de sauter brutalement vers le haut !
+    chatEndRef.current?.scrollIntoView({ 
+      behavior: "smooth", 
+      block: "end" 
+    });
+  }, [visibleMessages.length, isTyping]);
+
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:size-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
+    <div className="flex-1 flex flex-col bg-white h-full justify-between p-4 relative w-full overflow-hidden">
+      
+      <LandingHeader />
+
+      {/* 📜 LE BLOC DE CONVERSATION UNIQUE */}
+      <div className="flex-1 overflow-y-auto my-2 pr-0.5 space-y-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] w-full pt-2">
+        
+        {visibleMessages.map((msg, idx) => (
+          <LandingBubble key={idx} sender={msg.sender} text={msg.text} />
+        ))}
+
+        {isTyping && <TypingIndicator />}
+
+        {/* 🚨 INTEGRATION DIRECTION DANS LE BLOC DE CONVERSATION */}
+        {showEmbeddedButton && (
+          <div className="w-full flex flex-col gap-2.5 pt-1 pb-2 animate-scale-up text-left max-w-[85%]">
+            
+          {/* 🔒 RECTIFICATION CHIRURGICALE : Poussé à droite dans le flux style bulle utilisateur */}
+            <div className="w-full flex justify-end text-right">
+              <button
+                type="button"
+                onClick={handleSwitchToSeller}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-50 border border-emerald-100 text-emerald-800 hover:text-emerald-900 text-[10px] font-black uppercase rounded-2xl rounded-tr-none shadow-3xs transition-all active:scale-95 cursor-pointer outline-none tracking-wide"
+              >
+                <RefreshCcw className="w-3 h-3 animate-spin [animation-duration:8s] text-emerald-600" />
+                  je suis plutôt Vendeur 💰
+              </button>
+            </div>
+
+
+            {/* Bouton de conversion final acheteur */}
+            <button
+              type="button"
+              onClick={() => router.push("/auth")}
+              className="w-full bg-[#0A2E1A] hover:bg-[#123D25] text-white font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs active:scale-[0.99] border-none cursor-pointer"
+            >
+              <span>Créer mon compte Acheteur</span>
+              <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+            </button>
+          </div>
+        )}
+
+        {/* CLÔTURE ET FIN DE L'HISTOIRE */}
+        {(showFinalActions || scriptMode === "FINISHED") && (
+          <div className="space-y-4 w-full pt-1 animate-scale-up text-left">
+            <button
+              onClick={() => router.push("/auth")}
+              className="w-full bg-[#0A2E1A] hover:bg-[#123D25] text-white font-extrabold py-3.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-[0.99] border-none cursor-pointer"
+            >
+              <span>Créer mon compte Vendeur</span>
+              <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+            </button>
+            
+            
+          </div>
+        )}
+
+        <LandingFooter />
+
+        <div ref={chatEndRef} />
+
+       
+
+        <LandingVFooter />
       </div>
 
-      <div className="relative z-[-1] flex place-items-center before:absolute before:h-[300px] before:w-full before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 sm:before:w-[480px] sm:after:w-[240px] before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
+      <div className="w-full text-center text-[9px] text-slate-300 font-bold flex items-center justify-center gap-1 border-t border-slate-100 pt-2 flex-shrink-0 mt-auto bg-white z-10 select-none">
+        <Award className="w-3.5 h-3.5 text-slate-200" />
+        <span>Protocole KauriPay Garanti • Certifié conforme CRIET</span>
       </div>
 
-      <div className="mb-32 grid text-center lg:mb-0 lg:w-full lg:max-w-5xl lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-balance text-sm opacity-50">
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+    </div>
   );
 }

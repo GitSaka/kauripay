@@ -135,28 +135,30 @@ export default function PublicPayPage() {
     }
   };
 
-  if (isLoading) return <div className="flex-1 flex items-center justify-center bg-white text-xs font-black text-slate-400 animate-pulse min-h-screen">{"Chargement..."}</div>;
-  if (error || !deal) return <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-white min-h-screen"><AlertCircle className="w-12 h-12 text-[#EF4444] mb-3" /><p className="text-sm font-bold text-slate-700">{error || "Ce lien n'existe pas."}</p></div>;
-    // 🛡️ BARRAGE VISUEL ADAPTÉ (ZÉRO ERREUR TYPESCRIPT)
-    if (isCheckingPayment || (isPaying && waitingForPin)){
+   // 🛡️ BARRAGE VISUEL ADAPTÉ (ZÉRO ERREUR TYPESCRIPT)
+   
+  if (isCheckingPayment) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-white h-full animate-fade-in">
-        
-        {/* On appelle le loader tout seul, sans lui donner de paramètre 'message' */}
-        <AppLoader />
-        
-        {/* On écrit le texte directement en dessous dans une vraie balise HTML */}
-        <p className="text-xs font-black text-[#0A2E1A] uppercase tracking-wide mt-4 animate-pulse">
-          Sécurisation des fonds en cours...
-        </p>
-        
-        <p className="text-[10px] font-bold text-slate-400 max-w-[80%] mx-auto mt-1 leading-relaxed">
-          KauriPay valide la réception de vos FCFA auprès de MTN/Moov. Veuillez ne pas fermer cette page.
-        </p>
-        
+      <div className="min-h-screen w-full bg-white flex flex-col justify-center items-center">
+        <AppLoader message="KauriPay valide la réception de vos FCFA auprès de MTN/Moov. Veuillez ne pas fermer cette page." />
       </div>
     );
   }
+
+
+    // ⏳ ÉCRAN DE CHARGEMENT INTÉGRAL SÉCURISÉ (MODÈLE BRANDING)
+    // ⏳ ÉCRAN DE CHARGEMENT COMPTABLE INITIAL (SÉCURISÉ & DYNAMIQUE)
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full bg-white flex flex-col justify-center items-center">
+        <AppLoader message="KauriPay sécurise la liaison réseau pour vérifier les détails de votre transaction. Veuillez patienter." />
+      </div>
+    );
+  }
+
+
+  if (error || !deal) return <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-white min-h-screen"><AlertCircle className="w-12 h-12 text-[#EF4444] mb-3" /><p className="text-sm font-bold text-slate-700">{error || "Ce lien n'existe pas."}</p></div>;
+   
 
   return (
     <div className="flex-1 flex flex-col justify-between p-6 bg-white min-h-screen animate-fade-in relative">

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/config/prisma";
+import { TransactionStatus } from "@prisma/client";
 
-const FEDAPAY_SECRET = process.env.FEDAPAY_SECRET_KEY!;
 const FEDAPAY_API_URL = "https://sandbox-api.fedapay.com/v1";
 
 export async function POST(req: NextRequest) {
@@ -12,30 +12,83 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "ref et phone requis" }, { status: 400 });
     }
 
-    // 1. Récupère la transaction escrow
-    const tx = await prisma.escrowTransaction.findUnique({ where: { ref } });
+    // 1. Récupère la transaction escrow maîtresse en base de données
+    const masterTx = await prisma.escrowTransaction.findUnique({ where: { ref } });
 
-    if (!tx || tx.status !== "PENDING_PAYMENT") {
-      return NextResponse.json({ error: "Transaction invalide ou déjà traitée" }, { status: 400 });
+    if (!masterTx) {
+      return NextResponse.json({ error: "Transaction introuvable." }, { status: 404 });
     }
 
     const cleanPhone = String(phone).replace(/\s/g, "").replace("+229", "");
+    const formattedBuyerPhone = `+229${cleanPhone}`;
 
-    // 2. Crée la transaction FedaPay en mode lien
+    // 🚀 LE MOTEUR DE SÉCURITÉ ANTI-FRAUDE : Un vendeur ne peut pas s'acheter son propre produit réutilisable
+    const seller = await prisma.user.findUnique({ where: { id: masterTx.sellerId } });
+    if (seller && seller.phone === formattedBuyerPhone) {
+      return NextResponse.json(
+        { error: "Action interdite. Vous ne pouvez pas effectuer un paiement sur votre propre lien commercial." },
+        { status: 400 }
+      );
+    }
+
+    // Variable pivot qui va stocker le contrat à traiter par FedaPay
+    let targetTx = masterTx;
+
+    // =========================================================================
+    // 🔒 FLUX DE DUPLICATION INTELLIGENT (SI LIEN PERMANENT RÉUTILISABLE)
+    // =========================================================================
+    if (masterTx.isReusable) {
+      // Génération d'une référence enfant unique pour cet acheteur précis
+      const childRef = `KRP-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      // Recherche de l'acheteur pour lier son ID s'il possède déjà un compte KauriPay
+      const existingBuyer = await prisma.user.findUnique({
+        where: { phone: formattedBuyerPhone },
+      });
+
+      // Duplication atomique du contrat en base de données
+      targetTx = await prisma.escrowTransaction.create({
+        data: {
+          ref: childRef,
+          description: masterTx.description,
+          amountFcfa: masterTx.amountFcfa,
+          feeFcfa: masterTx.feeFcfa,
+          totalFcfa: masterTx.totalFcfa,
+          sellerId: masterTx.sellerId,
+          buyerPhone: formattedBuyerPhone,
+          buyerId: existingBuyer ? existingBuyer.id : null,
+          status: TransactionStatus.PENDING_PAYMENT,
+          parentId: masterTx.id, // On scelle le lien de parenté avec le produit maître
+        },
+      });
+    } else {
+      // Si c'est un lien classique unique, on valide simplement son statut d'attente
+      if (masterTx.status !== "PENDING_PAYMENT") {
+        return NextResponse.json({ error: "Transaction invalide ou déjà traitée" }, { status: 400 });
+      }
+    }
+
+    // On récupère la clé secrète à l'instant T de l'exécution
+    const currentFerapaySecret = process.env.FEDAPAY_SECRET_KEY;
+    if (!currentFerapaySecret) {
+      return NextResponse.json({ error: "Configuration système FedaPay manquante." }, { status: 500 });
+    }
+
+    // 2. Crée la transaction FedaPay en mode lien sur le contrat cible (Enfant ou Classique)
     const createRes = await fetch(`${FEDAPAY_API_URL}/transactions`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${FEDAPAY_SECRET}`,
+        "Authorization": `Bearer ${currentFerapaySecret}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        amount: Math.round(Number(tx.totalFcfa)), // Forcer un entier strict absolu
+        amount: Math.round(Number(targetTx.totalFcfa)),
         currency: { iso: "XOF" },
-        description: `Séquestre KauriPay ${tx.ref}`,
-        callback_url: `${process.env.NEXT_PUBLIC_NGROK_URL}/api/payment/webhook`, // Ton URL d'origine inchangée
+        description: `Séquestre KauriPay ${targetTx.ref}`,
+        callback_url: `${process.env.NEXT_PUBLIC_NGROK_URL}/api/payment/webhook`,
         customer: {
           firstname: "Client",
-          email: `test+${ref}@kauri.com`,
+          email: `test+${targetTx.ref}@kauri.com`,
           phone_number: { number: cleanPhone, country: "BJ" }
         }
       })
@@ -43,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     const createData = await createRes.json();
 
-    // Extraction sécurisée de l'ID FedaPay
+    // Extraction sécurisée multi-format de l'ID de session FedaPay
     const fedapayId = createData?.transaction?.id || createData?.["v1/transaction"]?.id || createData?.v1_transaction?.id;
 
     if (!createRes.ok || !fedapayId) {
@@ -51,18 +104,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: createData.message || "FedaPay refuse d'initialiser la transaction." }, { status: 400 });
     }
 
-    // 3. Génère le lien de paiement (Token de redirection)
+    // 3. Génère le jeton de facturation pour l'iframe de ta capsule
     const tokenRes = await fetch(`${FEDAPAY_API_URL}/transactions/${fedapayId}/token`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${FEDAPAY_SECRET}`,
+        "Authorization": `Bearer ${currentFerapaySecret}`,
         "Content-Type": "application/json"
       }
     });
 
     const tokenData = await tokenRes.json();
 
-    // Extraction sécurisée de l'URL du jeton FedaPay
+    // Extraction sécurisée de l'URL du jeton d'affichage de la facture
     const generatedPaymentUrl = tokenData?.url || tokenData?.["v1/token"]?.url || tokenData?.v1_token?.url || tokenData?.token?.url;
 
     if (!tokenRes.ok || !generatedPaymentUrl) {
@@ -70,32 +123,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Impossible de générer le lien de facturation." }, { status: 400 });
     }
 
-    // 4. 🔒 CORRECTIONS COMPTABLES ET ALIGNEMENT PRISMA
-    // Suppression complète du champ inconnu fedapayId pour éliminer l'erreur de validation
-    await prisma.escrowTransaction.update({
-      where: { id: tx.id },
-      data: { 
-        buyerPhone: `+229${cleanPhone}`
-      }
-    });
+    // 4. Mettre à jour le numéro d'appel de l'acheteur si c'est un lien classique
+    if (!masterTx.isReusable) {
+      await prisma.escrowTransaction.update({
+        where: { id: targetTx.id },
+        data: { 
+          buyerPhone: formattedBuyerPhone
+        }
+      });
+    }
 
-    // Sauvegarde en toute sécurité de l'identifiant FedaPay dans ton journal d'historique (metadata)
+    // 5. Journalisation comptable immuable de l'envoi de la facture Mobile Money
     await prisma.transactionHistory.create({
       data: {
-        transactionId: tx.id,
+        transactionId: targetTx.id,
         type: "payment_link_created",
-        amountFcfa: Number(tx.totalFcfa),
+        amountFcfa: Number(targetTx.totalFcfa),
         metadata: { 
           fedapay_id: String(fedapayId), 
-          payment_url: generatedPaymentUrl 
+          payment_url: generatedPaymentUrl,
+          isDerivedFromReusable: masterTx.isReusable,
+          parentRef: masterTx.isReusable ? masterTx.ref : null
         }
       }
     });
 
-    // 5. Renvoie juste le lien, pas de redirection
+    // 6. Renvoi de la charge utile pour alimenter ton Iframe et déclencher le Polling
     return NextResponse.json({
       status: "requires_action",
-      ref: tx.ref,
+      ref: targetTx.ref, // Crucial : Renvoie la référence cible (Enfant ou Classique) pour que le Polling interroge le bon contrat !
       payment_url: generatedPaymentUrl,
       message: "Ouvre ce lien pour payer"
     });

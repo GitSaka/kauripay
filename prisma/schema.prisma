@@ -86,6 +86,7 @@ model Wallet {
 // ==========================================
 // 3. LE MODÈLE UNIQUE : ESCROW_TRANSACTION (Fusionné & Complet)
 // ==========================================
+
 model EscrowTransaction {
   id             String            @id @default(cuid())
   ref            String            @unique // Référence unique métier (ex: KRP-847293)
@@ -121,11 +122,18 @@ model EscrowTransaction {
   dispute        Dispute?
   notifications  Notification[]
 
+  // 🔒 LES 3 LIGNES CORRECTRICES POUR LES LIENS PERMANENTS RÉUTILISABLES :
+  isReusable     Boolean           @default(false) // Indique si c'est un lien modèle d'origine (Master Link)
+  parentId       String?           // Si c'est un achat client, contient l'ID du lien modèle parent
+  parent         EscrowTransaction? @relation("ReusableChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children       EscrowTransaction[] @relation("ReusableChildren")
+
   @@index([sellerId])
   @@index([buyerId])
   @@index([status])
   @@map("escrow_transactions")
 }
+
 
 // ==========================================
 // 4. TABLE : TRANSACTION_HISTORY (Append-Only)

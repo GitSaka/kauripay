@@ -6,7 +6,8 @@ const FEDAPAY_API_URL = "https://sandbox-api.fedapay.com/v1";
 
 export async function POST(req: NextRequest) {
   try {
-    const { ref, phone } = await req.json();
+    // 🔒 ÉVOLUTION LOGIQUE : Extraction de la quantité choisie et de la note tapée par l'acheteur
+    const { ref, phone, quantity, note } = await req.json();
 
     if (!ref || !phone) {
       return NextResponse.json({ error: "ref et phone requis" }, { status: 400 });
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     const cleanPhone = String(phone).replace(/\s/g, "").replace("+229", "");
     const formattedBuyerPhone = `+229${cleanPhone}`;
 
-    // 🚀 LE MOTEUR DE SÉCURITÉ ANTI-FRAUDE : Un vendeur ne peut pas s'acheter son propre produit réutilisable
+    // 🚀 LE MOTEUR DE SÉCURITÉ ANTI-FRAUDE : Un vendeur ne peut pas s'acheter son propre produit
     const seller = await prisma.user.findUnique({ where: { id: masterTx.sellerId } });
     if (seller && seller.phone === formattedBuyerPhone) {
       return NextResponse.json(
@@ -35,9 +36,27 @@ export async function POST(req: NextRequest) {
     let targetTx = masterTx;
 
     // =========================================================================
-    // 🔒 FLUX DE DUPLICATION INTELLIGENT (SI LIEN PERMANENT RÉUTILISABLE)
+    // 🔒 FLUX DE DUPLICATION INTELLIGENT AVEC QUANTITÉ ET NOTE CLIENT
     // =========================================================================
     if (masterTx.isReusable) {
+      // Validation de la quantité côté serveur pour éviter les fraudes à la virgule
+      const parsedQuantity = parseInt(quantity, 10);
+      if (isNaN(parsedQuantity) || parsedQuantity < 1) {
+        return NextResponse.json({ error: "La quantité choisie doit être supérieure ou égale à 1." }, { status: 400 });
+      }
+
+      // CALCULS COMPTABLES DYNAMIQUES BASÉS SUR LA QUANTITÉ
+      const finalAmountFcfa = masterTx.amountFcfa * parsedQuantity;
+      
+      // Application de la commission KauriPay (3% avec plancher à 500 F CFA)
+      const rawFee = Math.round(finalAmountFcfa * 0.03);
+      const finalFeeFcfa = rawFee < 500 ? 500 : rawFee;
+      const finalTotalFcfa = finalAmountFcfa + finalFeeFcfa;
+
+      // Fusion propre de la description du produit et de la note de friperie de l'acheteur
+      const cleanNote = note && note.trim().length > 0 ? note.trim() : "Aucune précision.";
+      const enrichedDescription = `${masterTx.description} (Qté: ${parsedQuantity}) • Note client: ${cleanNote}`;
+
       // Génération d'une référence enfant unique pour cet acheteur précis
       const childRef = `KRP-${Math.floor(100000 + Math.random() * 900000)}`;
 
@@ -46,19 +65,19 @@ export async function POST(req: NextRequest) {
         where: { phone: formattedBuyerPhone },
       });
 
-      // Duplication atomique du contrat en base de données
+      // Duplication atomique et sécurisée du contrat enfant sur Neon Cloud
       targetTx = await prisma.escrowTransaction.create({
         data: {
           ref: childRef,
-          description: masterTx.description,
-          amountFcfa: masterTx.amountFcfa,
-          feeFcfa: masterTx.feeFcfa,
-          totalFcfa: masterTx.totalFcfa,
+          description: enrichedDescription,
+          amountFcfa: finalAmountFcfa,
+          feeFcfa: finalFeeFcfa,
+          totalFcfa: finalTotalFcfa,
           sellerId: masterTx.sellerId,
           buyerPhone: formattedBuyerPhone,
           buyerId: existingBuyer ? existingBuyer.id : null,
           status: TransactionStatus.PENDING_PAYMENT,
-          parentId: masterTx.id, // On scelle le lien de parenté avec le produit maître
+          parentId: masterTx.id,
         },
       });
     } else {
@@ -74,7 +93,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Configuration système FedaPay manquante." }, { status: 500 });
     }
 
-    // 2. Crée la transaction FedaPay en mode lien sur le contrat cible (Enfant ou Classique)
+    // 2. Crée la transaction FedaPay en mode lien sur le contrat cible (Enfant recalculé ou Classique)
     const createRes = await fetch(`${FEDAPAY_API_URL}/transactions`, {
       method: "POST",
       headers: {
@@ -143,7 +162,8 @@ export async function POST(req: NextRequest) {
           fedapay_id: String(fedapayId), 
           payment_url: generatedPaymentUrl,
           isDerivedFromReusable: masterTx.isReusable,
-          parentRef: masterTx.isReusable ? masterTx.ref : null
+          parentRef: masterTx.isReusable ? masterTx.ref : null,
+          userSelectedQuantity: masterTx.isReusable ? quantity : 1
         }
       }
     });
@@ -151,7 +171,7 @@ export async function POST(req: NextRequest) {
     // 6. Renvoi de la charge utile pour alimenter ton Iframe et déclencher le Polling
     return NextResponse.json({
       status: "requires_action",
-      ref: targetTx.ref, // Crucial : Renvoie la référence cible (Enfant ou Classique) pour que le Polling interroge le bon contrat !
+      ref: targetTx.ref, // Crucial : Renvoie la référence cible (Enfant recalculé)
       payment_url: generatedPaymentUrl,
       message: "Ouvre ce lien pour payer"
     });

@@ -15,6 +15,7 @@ export default function NewEscrowPage() {
   const [amount, setAmount] = useState<string>("");
   const [description, setDescription] = useState<string>("");
   const [copied, setCopied] = useState<boolean>(false);
+  const [isReusable, setIsReusable] = useState<boolean>(false);
 
   
   // États de calcul et d'interface
@@ -76,7 +77,7 @@ export default function NewEscrowPage() {
       return;
     }
 
-    if (cleanPhone.length < 8) {
+     if (!(role === "SELLER" && isReusable) && cleanPhone.length < 8) {
       setError(`Veuillez entrer un numéro WhatsApp de ${role === "BUYER" ? "vendeur" : "acheteur"} valide.`);
       setIsLoading(false);
       return;
@@ -106,17 +107,20 @@ export default function NewEscrowPage() {
         // 🚀 PROPULSION FLUIDE : Redirection automatique vers sa propre page de facture publique !
         window.location.href = `/pay/${data.ref}`;
 
-      } else {
+      }  else {
         
-        // 🔒 SCÉNARIO VENDEUR : (Ton code d'origine intact qui marchait très bien)
+        // 🔒 SCÉNARIO VENDEUR ADAPTÉ : Envoi de la configuration réutilisable
         const response = await fetch("/api/escrow/create-link", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sellerId: currentUserId,
-            buyerPhone: `+229${cleanPhone}`,
+            // Si la case est cochée, on envoie "MULTIPLE" à l'API, sinon le numéro propre
+            buyerPhone: isReusable ? "MULTIPLE" : `+229${cleanPhone}`,
             amountFcfa: parseInt(amount, 10),
             description: description.trim(),
+            // 🔒 TRANSMISSION DE LA NOUVELLE CLÉ COMPATIBLE BACKEND
+            isReusable: isReusable
           }),
         });
 
@@ -127,6 +131,7 @@ export default function NewEscrowPage() {
         setGeneratedLink(`${window.location.origin}/pay/${data.ref}`);
         setIsLoading(false);
       }
+
 
     } catch (err: any) {
       setError(err.message);
@@ -169,8 +174,8 @@ export default function NewEscrowPage() {
       </div>
 
       {/* 📦 FORMULAIRE STYLE CAPSULE MODULAIRE */}
-      <div className="w-full my-auto py-4">
-        <div className="bg-slate-50 rounded-3xl p-4 border border-slate-100 shadow-sm">
+      <div className="w-full my-auto py-1">
+        <div className="bg-slate-50 rounded-3xl p-1 border border-slate-100 shadow-sm">
           
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-100 text-[#EF4444] rounded-xl flex items-start gap-2 text-xs font-bold">
@@ -221,27 +226,62 @@ export default function NewEscrowPage() {
           )
           : (
             <form onSubmit={handleSubmit} className="space-y-4">
+
+              {role === "SELLER" && (
+                <div className="bg-amber-50/60 border border-amber-100 rounded-2xl p-4 my-2 flex items-start gap-3 animate-fade-in text-left">
+                  <input
+                    type="checkbox"
+                    id="isReusable"
+                    checked={isReusable}
+                    onChange={(e) => {
+                      setIsReusable(e.target.checked);
+                      if (e.target.checked) setPartnerPhone(""); // Nettoie le numéro si activé
+                    }}
+                    className="mt-1 w-4 h-4 rounded border-slate-300 text-[#4EBA93] focus:ring-[#34D399] cursor-pointer"
+                  />
+                  <label htmlFor="isReusable" className="cursor-pointer select-none">
+                    <p className="text-xs font-black uppercase text-amber-800 tracking-wide">
+                      ⚡ Créer un Lien Réutilisable (Permanent)
+                    </p>
+                    <p className="text-[10px] font-bold text-amber-600/80 leading-relaxed mt-0.5">
+                      Idéal pour vos catalogues ou friperies. Plusieurs acheteurs pourront cliquer sur ce même lien permanent et choisir leur quantité [⚙_0].
+                    </p>
+                  </label>
+                </div>
+              )}
               
               {/* Le label s'adapte dynamiquement selon le rôle sélectionné */}
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
-                  {role === "BUYER" ? "Numéro WhatsApp du Vendeur" : "Numéro WhatsApp de l'Acheteur"}
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 font-bold text-sm">
-                    +229
-                  </span>
-                  <input
-                    type="tel"
-                    placeholder="01 00 00 00 00"
-                    required
-                    disabled={isLoading}
-                    value={partnerPhone}
-                    onChange={(e) => setPartnerPhone(e.target.value.replace(/\D/g, ""))}
-                    className="w-full pl-16 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#4EBA93] focus:border-transparent transition-all text-gray-600"
-                  />
+                          {/* 📱 CONDITION PARTICULE DU CHAMP NUMÉRO */}
+              {!(role === "SELLER" && isReusable) ? (
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
+                    {role === "BUYER" ? "Numéro WhatsApp du Vendeur" : "Numéro WhatsApp de l'Acheteur"}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 font-bold text-sm select-none">
+                      +229
+                    </span>
+                    <input
+                      type="tel"
+                      placeholder="01 00 00 00 00"
+                      required={!(role === "SELLER" && isReusable)}
+                      disabled={isLoading}
+                      value={partnerPhone}
+                      onChange={(e) => setPartnerPhone(e.target.value.replace(/\D/g, ""))}
+                      className="w-full pl-16 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#4EBA93] focus:border-transparent transition-all text-gray-600"
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* Écran intermédiaire neutre qui remplace le numéro */
+                <div className="bg-slate-100/50 border border-slate-200/60 rounded-2xl p-1 flex items-center gap-1 text-slate-400 text-left animate-fade-in">
+                  <Info className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <span className="text-[10px] font-black uppercase tracking-wider leading-relaxed">
+                    Ce lien sera Universelle.
+                  </span>
+                </div>
+              )}
+
 
               <div>
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">

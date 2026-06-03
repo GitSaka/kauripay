@@ -36,7 +36,7 @@ export default function BuyerActionCard({
   const textualInfo = parts[0] || "Aucun détail logistique renseigné.";
     const uploadedImages = trackingUrl ? trackingUrl.split(",") : [];
 
-  console.log(uploadedImages)
+ 
 
   return (
     <div className="space-y-4 bg-white rounded-2xl p-4 border border-slate-200 shadow-sm w-full relative">

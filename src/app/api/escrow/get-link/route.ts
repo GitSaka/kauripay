@@ -45,7 +45,9 @@ export async function GET(request: Request) {
         totalFcfa: deal.totalFcfa,
         status: deal.status,
         sellerName: deal.seller.name,
-        buyerPhone: deal.buyerPhone, // Permet de pré-remplir le champ si Yao l'avait saisi
+        buyerPhone: deal.buyerPhone,
+        // 🔒 LA LIGNE CORRECTRICE VITAL : Transmet l'interrupteur réutilisable à ton écran public !
+        isReusable: deal.isReusable, 
       },
     });
 

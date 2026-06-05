@@ -54,10 +54,22 @@ export async function POST(request: NextRequest) {
       return newUser;
     });
 
-    return NextResponse.json({
+    // 🔒 SCELLAGE DE LA SESSION DIRECTE POUR LE MIDDLEWARE (MODIFICATION ICI)
+    const response = NextResponse.json({
       message: "Espace client sécurisé et transactions associées avec succès.",
       user: { id: finalUser.id, phone: finalUser.phone, name: finalUser.name }
     }, { status: 201 });
+
+    // Écriture du cookie de session pour ouvrir les portes du Middleware Next.js
+    response.cookies.set("kauripay_session_id", finalUser.id, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 7, // Maintient la session active pendant 7 jours
+      path: "/",
+    });
+
+    return response;
 
   } catch (error) {
     console.error("❌ ERREUR_REGISTER_ASSIST_API :", error);

@@ -17,10 +17,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // Nettoyage et formatage du numéro au format international strict
-    const formattedPhone = phone.replace(/\s/g, "");
+    // 🔒 STANDARDIZATION +229 FINTECH TRÈS STRICTE POUR L'AFRIQUE DE L'OUEST
+    const basePhone = phone.replace(/\s/g, "");
+    const formattedPhone = basePhone.startsWith("+229") ? basePhone : `+229${basePhone.replace("+", "")}`;
 
-    // 2. Vérification immédiate de l'existence de l'utilisateur
+    // 2. Vérification immédiate de l'existence de l'utilisateur avec le numéro standardisé
     const existingUser = await prisma.user.findUnique({
       where: { phone: formattedPhone },
     });
@@ -114,7 +115,7 @@ export async function POST(request: Request) {
         );
       }
 
-      // Validation du mot de passe
+      // Validation du mot de passe avec le hash unifié de bcryptjs
       const isPasswordValid = await bcrypt.compare(password, existingUser.passwordHash);
       if (!isPasswordValid) {
         return NextResponse.json(

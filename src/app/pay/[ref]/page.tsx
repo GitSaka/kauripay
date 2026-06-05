@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ShieldCheck, Smartphone, AlertCircle, CheckCircle2, ArrowRight, Loader2, X } from "lucide-react";
+import { ShieldCheck, Smartphone, AlertCircle, CheckCircle2, ArrowRight, Loader2, X, FileText, Plus, Minus } from "lucide-react";
 import AppLoader from "@/components/AppLoader";
 
 interface PendingDeal {
-  id: string; ref: string; description: string; amountFcfa: number; feeFcfa: number; totalFcfa: number; sellerName: string; buyerPhone: string; status: string;
+  id: string; ref: string; isReusable: boolean; description: string; amountFcfa: number; feeFcfa: number; totalFcfa: number; sellerName: string; buyerPhone: string; status: string;
 }
 
 export default function PublicPayPage() {
@@ -21,6 +21,16 @@ export default function PublicPayPage() {
     // 🔐 Le gardien du décalage réseau FedaPay / Base de données
   const [isCheckingPayment, setIsCheckingPayment] = useState<boolean>(false);
 
+   // 🔒 NOUVEAUX ÉTATS POUR GÉRER LA QUANTITÉ ET LA NOTE CLIENT (À RAJOUTER)
+    const [quantity, setQuantity] = useState<number>(1);
+    const [note, setNote] = useState<string>("");
+  
+     // États de calculs financiers dynamiques pour l'affichage à l'écran
+    const [displayAmount, setDisplayAmount] = useState<number>(0);
+    const [displayFee, setDisplayFee] = useState<number>(0);
+    const [displayTotal, setDisplayTotal] = useState<number>(0);
+  
+
   
   // 🔒 États pour gérer l'affichage interne du guichet de paiement
   const [waitingForPin, setWaitingForPin] = useState<boolean>(false);
@@ -33,7 +43,17 @@ export default function PublicPayPage() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         setDeal(data.deal);
-        if (data.deal.buyerPhone) setBuyerPhone(data.deal.buyerPhone.replace("+229", ""));
+
+         if (data.deal.isReusable || data.deal.buyerPhone === "MULTIPLE") {
+          setBuyerPhone(""); // Force la case à être vide et propre pour l'acheteur !
+        } else if (data.deal.buyerPhone) {
+          setBuyerPhone(data.deal.buyerPhone.replace("+229", ""));
+        }
+
+        // 🔒 INITIALISATION DES PRIX DYNAMIQUES VISUELS SUR LA PAGE PUBLIQUE
+        setDisplayAmount(data.deal.amountFcfa);
+        setDisplayFee(data.deal.feeFcfa);
+        setDisplayTotal(data.deal.totalFcfa);
       } catch (err: any) {
         setError(err.message || "Lien de paiement invalide.");
       } finally {
@@ -42,6 +62,26 @@ export default function PublicPayPage() {
     };
     if (ref) fetchDealData();
   }, [ref]);
+
+    // 📊 CALCULATRICE DYNAMIQUE KAURIPAY POUR LES LIENS PERMANENTS
+  useEffect(() => {
+    if (!deal || !deal.isReusable) return;
+
+    // Calcul du sous-total basé sur la quantité choisie par l'acheteur
+    const newAmount = deal.amountFcfa * quantity;
+    
+    // Règle stricte KauriPay : 3% de frais avec plancher obligatoire à 500 F CFA
+    const rawFee = Math.round(newAmount * 0.03);
+    const newFee = rawFee < 500 ? 500 : rawFee;
+    
+    const newTotal = newAmount + newFee;
+
+    // Mise à jour instantanée des états d'affichage visuels
+    setDisplayAmount(newAmount);
+    setDisplayFee(newFee);
+    setDisplayTotal(newTotal);
+  }, [quantity, deal]);
+
 
     useEffect(() => {
     let intervalId: NodeJS.Timeout;
@@ -74,6 +114,29 @@ export default function PublicPayPage() {
     // Nettoyage de sécurité si l'utilisateur ferme la page
     return () => clearInterval(intervalId);
   }, [isCheckingPayment, ref, router]);
+
+
+    // 📊 CALCULATRICE AUTOMATIQUE EN TEMPS RÉEL (KAURIPAY SMART ROUTING)
+  useEffect(() => {
+    // Si le deal n'est pas encore chargé, ou s'il ne s'agit pas d'un lien réutilisable, on stoppe.
+    if (!deal || !deal.isReusable) return;
+
+    // 1. Calcul automatique du prix des articles (Prix Unitaire x Quantité)
+    const newAmount = deal.amountFcfa * quantity;
+    
+    // 2. Calcul des frais KauriPay (3% avec respect du plancher strict de 500 F CFA)
+    const rawFee = Math.round(newAmount * 0.03);
+    const newFee = rawFee < 500 ? 500 : rawFee;
+    
+    // 3. Calcul du total absolu net
+    const newTotal = newAmount + newFee;
+
+    // 4. Injection immédiate dans tes variables d'affichage visuelles
+    setDisplayAmount(newAmount);
+    setDisplayFee(newFee);
+    setDisplayTotal(newTotal);
+
+  }, [quantity, deal]); // 🔄 Le calcul se relance AUTOMATIQUEMENT dès que la quantité ou le deal change !
 
 
   // Chrono de surveillance automatique en arrière-plan (Polling)
@@ -115,7 +178,10 @@ export default function PublicPayPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ref: ref,
-          phone: cleanPhone
+          phone: cleanPhone,
+          
+          quantity: deal?.isReusable ? quantity : 1,
+          note: deal?.isReusable ? note : ""
         }),
       });
 
@@ -161,7 +227,7 @@ export default function PublicPayPage() {
    
 
   return (
-    <div className="flex-1 flex flex-col justify-between p-6 bg-white min-h-screen animate-fade-in relative">
+    <div className="flex-1 flex flex-col justify-between p-6 bg-white animate-fade-in relative">
       
       {/* 🖥️ RIDEAU DE PAIEMENT SÉCURISÉ INTÉGRÉ (OVERLAY COMPLET SUR LA PAGE) */}
       {waitingForPin && paymentUrl && (
@@ -213,7 +279,56 @@ export default function PublicPayPage() {
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{"Vendeur"}</p>
             <p className="text-base font-black text-slate-800">{deal.sellerName}</p>
             <p className="text-xs font-bold text-slate-500 mt-1 bg-white inline-block px-3 py-1 rounded-xl border border-slate-100">📦 {deal.description}</p>
+          
           </div>
+
+                      {/* 🔒 BLOC COMPTEUR DE QUANTITÉ ET NOTE CLIENT (À coller sous la description) */}
+          {deal.isReusable && (
+            <div className="space-y-4 pt-2 animate-fade-in text-left">
+              
+              {/* Le Sélecteur de Quantité Style Panier */}
+              <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 flex justify-between items-center">
+                <div>
+                  <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Quantité commandée</p>
+                  <p className="text-[9px] font-bold text-slate-400 mt-0.5">Prix unitaire: {deal.amountFcfa.toLocaleString("fr-FR")} F</p>
+                </div>
+                <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                    className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border-none cursor-pointer outline-none active:scale-95 transition-all"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="font-mono font-black text-sm text-slate-800 w-6 text-center select-none">{quantity}</span>
+                  <button
+                    type="button"
+                    onClick={() => setQuantity(quantity + 1)}
+                    className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border-none cursor-pointer outline-none active:scale-95 transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* La Zone de Texte Note Client */}
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1">
+                  <FileText className="w-3 h-3 text-[#4EBA93]" />
+                  Précisions pour le vendeur ( Taille / Couleur / Modèle de fripe )
+                </label>
+                <textarea
+                  placeholder="Ex: La veste en cuir marron taille M et la chemise n°3..."
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  className="w-full p-3 bg-white border border-slate-200 rounded-xl font-medium text-xs focus:outline-none focus:ring-2 focus:ring-[#34D399] focus:border-transparent transition-all resize-none text-slate-700 font-sans"
+                />
+              </div>
+
+            </div>
+          )}
+
 
           {error && <div className="p-3 bg-red-50 border border-red-100 text-[#EF4444] rounded-xl flex items-start gap-2 text-xs font-bold"><AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /><span>{error}</span></div>}
 
@@ -234,14 +349,27 @@ export default function PublicPayPage() {
               </div>
             </div>
 
-            <div className="p-4 bg-white rounded-2xl border border-slate-200/60 space-y-2">
-              <div className="flex justify-between items-center text-xs text-slate-500 font-bold"><span>{"Prix du produit :"}</span><span className="text-slate-800">{deal.amountFcfa.toLocaleString("fr-FR")} F</span></div>
-              <div className="flex justify-between items-center text-xs text-slate-500 font-bold"><span>{"Frais de blocage sécurisé :"}</span><span className="text-slate-800">{deal.feeFcfa.toLocaleString("fr-FR")} F</span></div>
-              <div className="pt-2 border-t border-slate-100 flex justify-between items-center"><span className="text-xs font-black text-slate-400 uppercase tracking-wider">{"Total de la transaction :"}</span><span className="text-lg font-black text-slate-800">{deal.totalFcfa.toLocaleString("fr-FR")} F CFA</span></div>
+                        <div className="p-4 bg-white rounded-2xl border border-slate-200/60 space-y-2">
+              <div className="flex justify-between items-center text-xs text-slate-500 font-bold">
+                <span>{"Prix du produit :"}</span>
+                {/* ✅ RECTIFICATION DYNAMIQUE A */}
+                <span className="text-slate-800">{displayAmount.toLocaleString("fr-FR")} F</span>
+              </div>
+              <div className="flex justify-between items-center text-xs text-slate-500 font-bold">
+                <span>{"Frais de blocage sécurisé :"}</span>
+                {/* ✅ RECTIFICATION DYNAMIQUE B */}
+                <span className="text-slate-800">{displayFee.toLocaleString("fr-FR")} F</span>
+              </div>
+              <div className="pt-2 border-t border-slate-100 flex justify-between items-center">
+                <span className="text-xs font-black text-slate-400 uppercase tracking-wider">{"Total de la transaction :"}</span>
+                {/* ✅ RECTIFICATION DYNAMIQUE C */}
+                <span className="text-lg font-black text-slate-800">{displayTotal.toLocaleString("fr-FR")} F CFA</span>
+              </div>
             </div>
 
+
             <button type="submit" disabled={isPaying || !buyerPhone} className="w-full bg-[#0A2E1A] hover:bg-[#123D25] text-white font-extrabold py-3.5 rounded-xl text-base shadow-md transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2">
-              {isPaying ? "Génération du guichet..." : `Sécuriser les fonds (${deal.totalFcfa.toLocaleString()} F)`}
+              {isPaying ? "Génération du guichet..." : `Sécuriser les fonds (${displayTotal.toLocaleString("fr-FR")} F)`}
               {!isPaying && <ArrowRight className="w-5 h-5 text-[#34D399]" />}
             </button>
           </form>

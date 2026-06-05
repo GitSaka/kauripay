@@ -244,7 +244,7 @@ export default function NewEscrowPage() {
                       ⚡ Créer un Lien Réutilisable (Permanent)
                     </p>
                     <p className="text-[10px] font-bold text-amber-600/80 leading-relaxed mt-0.5">
-                      Idéal pour vos catalogues ou friperies. Plusieurs acheteurs pourront cliquer sur ce même lien permanent et choisir leur quantité [⚙_0].
+                     Plusieurs acheteurs pourront cliquer sur ce même lien permanent pour payer au même moment.
                     </p>
                   </label>
                 </div>
@@ -340,7 +340,7 @@ export default function NewEscrowPage() {
              {/* Bouton de soumission dynamique aligné sur la couleur de la connexion */}
             <button
               type="submit"
-              disabled={isLoading || !amount || !description || !partnerPhone}
+              disabled={isLoading || !amount || !description }
                className="w-full bg-[#0A2E1A] hover:bg-[#123D25] text-white font-extrabold py-3.5 rounded-xl text-base shadow-md transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isLoading 

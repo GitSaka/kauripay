@@ -56,6 +56,7 @@ export default function DealDetailPage() {
     // 🔍 État local pour piloter la loupe photo du Vendeur
   const [sellerActivePreview, setSellerActivePreview] = useState<string | null>(null);
 
+ 
   // =========================================================================
   // 🔄 CHRONO DE SURVEILLANCE AUTONOME EN CIRCUIT FERMÉ (SANS WEBHOOK)
   // =========================================================================
@@ -150,6 +151,7 @@ export default function DealDetailPage() {
         if (data.deal.buyerPhone) {
           setMomoPhone(data.deal.buyerPhone.replace("+229", ""));
         }
+        
         
         if (data.deal.status === "PENDING_PAYMENT" && waitingForPin) {
           startPolling(uId); 

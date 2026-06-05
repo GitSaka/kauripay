@@ -146,6 +146,8 @@ export default function PublicPayPage() {
       const response = await fetch(`/api/escrow/get-link?ref=${reference}`);
       const data = await response.json();
        console.log(data.deal?.status)
+
+       
       if (data.deal?.status === "FUNDS_SECURED") {
         clearInterval(interval);
         
@@ -192,7 +194,7 @@ export default function PublicPayPage() {
       if (data.status === "requires_action" && data.payment_url) {
         setPaymentUrl(data.payment_url);
         setWaitingForPin(true);
-        verifierStatutPaiement(ref as string); // Lance l'écoute en arrière-plan
+         verifierStatutPaiement(data.ref);// Lance l'écoute en arrière-plan
       }
 
     } catch (err: any) {

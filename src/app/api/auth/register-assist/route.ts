@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/config/prisma";
-import crypto from "crypto";
-
-function hashPassword(password: string): string {
-  return crypto.createHmac("sha256", process.env.FEDAPAY_SECRET_KEY || "kauri_salt")
-    .update(password)
-    .digest("hex");
-}
+// 🔒 UNIFICATION FINTECH : Utilisation stricte de bcryptjs pour le chiffrement
+import bcrypt from "bcryptjs"; 
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,17 +13,19 @@ export async function POST(request: NextRequest) {
     }
 
     const finalPhone = phone.trim();
-    const passwordHash = hashPassword(password);
+
+    // 🔒 CHIFFREMENT ÉTANCHE : Génération d'un hash bcrypt sécurisé avec un coût algorithmique de 10
+    const passwordHash = await bcrypt.hash(password, 10);
 
     // 💾 TRANSACTION ATOMIQUE DE RATTRAPAGE COMPTABLE
     const finalUser = await prisma.$transaction(async (tx) => {
       
-      // A. Création de l'utilisateur
+      // A. Création de l'utilisateur avec son hash bcrypt
       const newUser = await tx.user.create({
         data: {
           phone: finalPhone,
           name: name || `Acheteur Kauri`,
-          passwordHash: passwordHash,
+          passwordHash: passwordHash, // Stocke le hash universel bcryptjs
           kycStatus: "unverified",
           role: "USER"
         }
@@ -43,7 +40,7 @@ export async function POST(request: NextRequest) {
         }
       });
 
-      // C. 🔒 LE BOUCLIER DE LIASON RÉTROACTIVE : Attache tous les deals orphelins à son ID
+      // C. 🔒 LE BOUCLIER DE LIAISON RÉTROACTIVE : Attache tous les deals orphelins à son ID
       await tx.escrowTransaction.updateMany({
         where: { 
           buyerPhone: finalPhone,

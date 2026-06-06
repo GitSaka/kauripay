@@ -5,29 +5,17 @@ import { TransactionStatus, NotificationType } from "@prisma/client";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    // 🔒 RECTIFICATION LOGIQUE : On extrait la clé isReusable envoyée par le formulaire du vendeur
-    const { sellerId, buyerPhone, amountFcfa, description, isReusable } = body;
+    // 🔒 EXTRACTION DU RÔLE : Permet de savoir qui de Koffi ou Yao crée le lien
+    const { sellerId, buyerPhone, amountFcfa, description, isReusable, role } = body;
 
     const isLinkPermanent = isReusable === true;
+    const isBuyerInitiated = role === "BUYER";
 
-    // 1. Contrôles de surface adaptés selon la nature du lien
-    // Si le lien est réutilisable, le numéro de l'acheteur n'est plus obligatoire maintenant
+    // 1. Contrôles de surface adaptés selon la nature de l'initiateur
     if (!sellerId || (!isLinkPermanent && !buyerPhone) || !amountFcfa || !description) {
       return NextResponse.json(
         { error: "Toutes les informations (montant, description) sont obligatoires." },
         { status: 400 }
-      );
-    }
-
-    // 2. Vérification de sécurité : Est-ce que Yao (le vendeur connecté) existe ?
-    const seller = await prisma.user.findUnique({
-      where: { id: sellerId },
-    });
-
-    if (!seller) {
-      return NextResponse.json(
-        { error: "Action non autorisée. Compte vendeur introuvable." },
-        { status: 401 }
       );
     }
 
@@ -39,17 +27,68 @@ export async function POST(request: Request) {
       );
     }
 
-    // Traitement du numéro de téléphone de l'acheteur s'il s'agit d'un deal classique unique
-    let cleanBuyerPhone = "MULTIPLE";
-    if (!isLinkPermanent && buyerPhone) {
-      cleanBuyerPhone = buyerPhone.replace(/\s/g, "");
-      
-      // Sécurité anti-fraude locale : Interdiction d'émettre un lien vers soi-même
-      if (seller.phone === cleanBuyerPhone) {
+    // Nettoyage initial du numéro du partenaire
+    const cleanPartnerPhone = buyerPhone ? buyerPhone.replace(/\s/g, "") : "MULTIPLE";
+
+    // Variables pivots pour stocker les vrais IDs à injecter en base de données
+    let finalSellerId = "";
+    let finalBuyerId: string | null = null;
+    let finalBuyerPhone = "MULTIPLE";
+    let notificationTargetId: string | null = null;
+    let sellerNameForNotification = "";
+
+    // =========================================================================
+    // 🔀 LOGIQUE HYBRIDE DE CONFIGURATION DES RÔLES EN BASE DE DONNÉES
+    // =========================================================================
+    if (isBuyerInitiated) {
+      // SCÉNARIO A : L'acheteur connecté crée le deal en tapant le numéro du vendeur
+      const buyerUser = await prisma.user.findUnique({ where: { id: sellerId } }); // sellerId contient l'id de la session
+      if (!buyerUser) {
+        return NextResponse.json({ error: "Session acheteur introuvable." }, { status: 401 });
+      }
+
+      // On va chercher le vrai vendeur dans la base via son numéro WhatsApp
+      const targetSeller = await prisma.user.findUnique({ where: { phone: cleanPartnerPhone } });
+      if (!targetSeller) {
         return NextResponse.json(
-          { error: "Vous ne pouvez pas créer un lien de paiement pour votre propre numéro WhatsApp." },
-          { status: 400 }
+          { error: "Aucun compte vendeur n'est rattaché à ce numéro WhatsApp. Invitez le vendeur à s'inscrire." },
+          { status: 404 }
         );
+      }
+
+      // Sécurité anti-fraude locale : Interdiction d'émettre un lien vers soi-même
+      if (buyerUser.phone === targetSeller.phone) {
+        return NextResponse.json({ error: "Vous ne pouvez pas initier un achat avec votre propre numéro." }, { status: 400 });
+      }
+
+      finalSellerId = targetSeller.id;
+      finalBuyerId = buyerUser.id;
+      finalBuyerPhone = buyerUser.phone;
+      notificationTargetId = targetSeller.id; // On va notifier le vendeur Yao
+      sellerNameForNotification = buyerUser.name; // C'est le nom de l'acheteur pour le texte
+
+    } else {
+      // SCÉNARIO B : Le vendeur crée le lien pour l'acheteur (Ton flux classique d'origine)
+      const sellerUser = await prisma.user.findUnique({ where: { id: sellerId } });
+      if (!sellerUser) {
+        return NextResponse.json({ error: "Compte vendeur introuvable." }, { status: 401 });
+      }
+
+      finalSellerId = sellerUser.id;
+      sellerNameForNotification = sellerUser.name;
+
+      if (!isLinkPermanent) {
+        finalBuyerPhone = cleanPartnerPhone;
+        
+        if (sellerUser.phone === finalBuyerPhone) {
+          return NextResponse.json({ error: "Vous ne pouvez pas émettre un lien pour votre propre numéro." }, { status: 400 });
+        }
+
+        const existingBuyer = await prisma.user.findUnique({ where: { phone: finalBuyerPhone } });
+        if (existingBuyer) {
+          finalBuyerId = existingBuyer.id;
+          notificationTargetId = existingBuyer.id; // On va notifier l'acheteur Koffi
+        }
       }
     }
 
@@ -58,57 +97,51 @@ export async function POST(request: Request) {
     const feeFcfa = rawFee < 500 ? 500 : rawFee;
     const totalFcfa = parsedAmount + feeFcfa;
 
-    // Génération d'une référence unique métier courte (ex: KRP-847293)
     const randomRef = `KRP-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    // 4. Recherche de Koffi si c'est un lien direct unique
-    const existingBuyer = !isLinkPermanent
-      ? await prisma.user.findUnique({ where: { phone: cleanBuyerPhone } })
-      : null;
 
     // 5. Exécution unifiée au sein d'une transaction Prisma atomique
     const result = await prisma.$transaction(async (tx) => {
       
-      // A. Création de la ligne officielle d'Escrow (Master ou Classique)
+      // A. Création de la ligne officielle d'Escrow à l'endroit exact !
       const deal = await tx.escrowTransaction.create({
         data: {
           ref: randomRef,
-          sellerId: seller.id,
-          buyerPhone: cleanBuyerPhone,
-          buyerId: existingBuyer ? existingBuyer.id : null,
+          sellerId: finalSellerId,
+          buyerId: finalBuyerId,
+          buyerPhone: finalBuyerPhone,
           amountFcfa: parsedAmount,
           feeFcfa,
           totalFcfa,
           status: TransactionStatus.PENDING_PAYMENT,
           description: description.trim(),
-          // 🔒 LES NOUVELLES COLONNES AJOUTÉES :
-          isReusable: isLinkPermanent,
+          isReusable: isLinkPermanent && !isBuyerInitiated, // Un lien initié par acheteur n'est jamais réutilisable
         },
       });
 
-      // B. Si l'acheteur est connu d'avance, on lui pousse une notification
-      if (existingBuyer && !isLinkPermanent) {
+      // B. Notification automatique du partenaire cible
+      if (notificationTargetId) {
         await tx.notification.create({
           data: {
-            userId: existingBuyer.id,
+            userId: notificationTargetId,
             transactionId: deal.id,
             type: NotificationType.TRANSACTION_CREATED,
-            title: "Nouveau lien de paiement reçu",
-            message: `${seller.name} vous invite à sécuriser un paiement de ${parsedAmount.toLocaleString("fr-FR")} F CFA pour : ${description.trim()}.`,
+            title: isBuyerInitiated ? "Proposition d'achat reçue 📦" : "Nouveau lien de paiement reçu 🔒",
+            message: isBuyerInitiated
+              ? `${sellerNameForNotification} souhaite vous acheter un article pour ${parsedAmount.toLocaleString("fr-FR")} F CFA : ${description.trim()}.`
+              : `${sellerNameForNotification} vous invite à sécuriser un paiement de ${parsedAmount.toLocaleString("fr-FR")} F CFA pour : ${description.trim()}.`,
             link: `/deal/${deal.id}`,
           },
         });
       }
 
-      // C. Journalisation comptable immédiate de la création de la demande
+      // C. Journalisation comptable
       await tx.transactionHistory.create({
         data: {
           transactionId: deal.id,
           type: "link_created",
           amountFcfa: parsedAmount,
           metadata: {
-            initiatedBySellerId: seller.id,
-            buyerTargetPhone: cleanBuyerPhone,
+            initiatedByRole: role,
             calculatedFee: feeFcfa,
             isPermanentLink: isLinkPermanent,
           },
@@ -120,9 +153,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        message: isLinkPermanent 
-          ? "Lien permanent réutilisable généré avec succès." 
-          : "Lien de paiement classique généré avec succès.",
+        message: "Lien généré avec succès.",
         ref: result.ref,
         dealId: result.id,
       },
@@ -132,7 +163,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("❌ ERREUR_CREATE_LINK_API :", error);
     return NextResponse.json(
-      { error: "Une erreur technique est survenue lors de la création du lien de paiement." },
+      { error: "Une erreur technique est survenue lors de la création du lien." },
       { status: 500 }
     );
   }

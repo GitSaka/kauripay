@@ -82,22 +82,21 @@ export default function NewEscrowPage() {
       setIsLoading(false);
       return;
     }
-
     try {
       // 🔀 AIGUILLAGE INTELLIGENT DE L'API SELON LE RÔLE DÉCLARÉ
       if (role === "BUYER") {
         
-        // 🔒 SCÉNARIO ACHETEUR : Il crée la transaction exacte en base via l'API du vendeur
-        // pour lister le deal au statut PENDING_PAYMENT sans faille
+        // 🔒 SCÉNARIO ACHETEUR : Il crée la transaction exacte en envoyant son rôle
         const response = await fetch("/api/escrow/create-link", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            // Comme c'est l'acheteur qui crée, il s'inscrit en face du numéro du vendeur
-            sellerId: currentUserId, // Sera géré par le numéro de téléphone en base
-            buyerPhone: `+229${cleanPhone}`, // C'est le téléphone du partenaire vendeur ici
+            sellerId: currentUserId, // Reçu comme initiateur
+            buyerPhone: `+229${cleanPhone}`, // Téléphone du partenaire vendeur
             amountFcfa: parseInt(amount, 10),
             description: description.trim(),
+            // 🔒 CORRECTIF : On envoie le rôle pour redresser les IDs côté API
+            role: "BUYER" 
           }),
         });
 
@@ -107,7 +106,7 @@ export default function NewEscrowPage() {
         // 🚀 PROPULSION FLUIDE : Redirection automatique vers sa propre page de facture publique !
         window.location.href = `/pay/${data.ref}`;
 
-      }  else {
+      } else {
         
         // 🔒 SCÉNARIO VENDEUR ADAPTÉ : Envoi de la configuration réutilisable
         const response = await fetch("/api/escrow/create-link", {
@@ -115,12 +114,12 @@ export default function NewEscrowPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sellerId: currentUserId,
-            // Si la case est cochée, on envoie "MULTIPLE" à l'API, sinon le numéro propre
             buyerPhone: isReusable ? "MULTIPLE" : `+229${cleanPhone}`,
             amountFcfa: parseInt(amount, 10),
             description: description.trim(),
-            // 🔒 TRANSMISSION DE LA NOUVELLE CLÉ COMPATIBLE BACKEND
-            isReusable: isReusable
+            isReusable: isReusable,
+            // 🔒 CORRECTIF : On transmet le rôle vendeur également
+            role: "SELLER" 
           }),
         });
 
@@ -132,11 +131,11 @@ export default function NewEscrowPage() {
         setIsLoading(false);
       }
 
-
-    } catch (err: any) {
-      setError(err.message);
-      setIsLoading(false);
-    }
+    } 
+      catch (err: any) {
+            setError(err.message);
+            setIsLoading(false);
+          }
   };
 
 
